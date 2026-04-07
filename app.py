@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import argparse
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from flask import Flask, jsonify, render_template_string, request
 
 app = Flask(__name__)
+INITIAL_JSON_TEXT = ""
 
 
 @dataclass
@@ -80,7 +83,7 @@ def parse_sessions(raw_data: Any) -> list[SessionData]:
 
 @app.route("/")
 def index() -> str:
-    return render_template_string(PAGE_TEMPLATE)
+    return render_template_string(PAGE_TEMPLATE, initial_json_text=INITIAL_JSON_TEXT)
 
 
 @app.post("/api/validate")
@@ -226,10 +229,11 @@ PAGE_TEMPLATE = """
 <body>
   <h1>LLM 답변 비교 웹페이지</h1>
   <div class="panel">
-    <p class="meta">JSON 데이터를 붙여넣고 <strong>데이터 확인</strong>을 누르세요.</p>
-    <textarea id="jsonInput" placeholder='[{"sessionNumber":1,"question":"질문","questionKorean":"한글질문","models":[{"name":"model1","original":"...","korean":"..."}]}]'></textarea>
+    <p class="meta">1) JSON 붙여넣기 또는 파일 선택 → 2) <strong>데이터 확인</strong> 버튼 클릭</p>
+    <input id="jsonFile" type="file" accept="application/json,.json" />
+    <textarea id="jsonInput" placeholder='[{"sessionNumber":1,"question":"질문","questionKorean":"한글질문","models":[{"name":"model1","original":"...","korean":"..."}]}]'>{{ initial_json_text }}</textarea>
     <div class="actions">
-      <button id="validateBtn">데이터 확인</button>
+      <button id="validateBtn" type="button">데이터 확인</button>
       <button id="loadSampleBtn" type="button">샘플 채우기</button>
     </div>
     <div id="errorMessage" class="error"></div>
@@ -249,6 +253,7 @@ PAGE_TEMPLATE = """
   <script>
     const jsonInput = document.getElementById('jsonInput');
     const validateBtn = document.getElementById('validateBtn');
+    const jsonFile = document.getElementById('jsonFile');
     const loadSampleBtn = document.getElementById('loadSampleBtn');
     const errorMessage = document.getElementById('errorMessage');
 
@@ -293,32 +298,89 @@ PAGE_TEMPLATE = """
       nextBtn.disabled = currentIndex === sessions.length - 1;
     }
 
-    async function validateAndLoad() {
+
+    jsonFile.addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        jsonInput.value = text;
+      } catch (err) {
+        errorMessage.textContent = `파일 읽기 실패: ${err.message}`;
+      }
+    });
+
+    function normalizeAndValidateClient(rawData) {
+      if (!Array.isArray(rawData)) {
+        throw new Error('최상위 JSON 형식은 배열(list)이어야 합니다.');
+      }
+
+      const normalized = rawData.map((item, index) => {
+        if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+          throw new Error(`${index + 1}번째 항목은 객체(object)여야 합니다.`);
+        }
+        const { sessionNumber, question, questionKorean, models } = item;
+        if (!Number.isInteger(sessionNumber)) {
+          throw new Error(`${index + 1}번째 sessionNumber는 정수여야 합니다.`);
+        }
+        if (typeof question !== 'string') {
+          throw new Error(`${index + 1}번째 question은 문자열이어야 합니다.`);
+        }
+        if (typeof questionKorean !== 'string') {
+          throw new Error(`${index + 1}번째 questionKorean은 문자열이어야 합니다.`);
+        }
+        if (!Array.isArray(models)) {
+          throw new Error(`${index + 1}번째 models는 배열(list)이어야 합니다.`);
+        }
+
+        const normalizedModels = models.map((model, modelIndex) => {
+          if (typeof model !== 'object' || model === null || Array.isArray(model)) {
+            throw new Error(`${index + 1}번째 세션의 ${modelIndex + 1}번째 모델 데이터는 객체여야 합니다.`);
+          }
+          const { name, original, korean } = model;
+          if (typeof name !== 'string') {
+            throw new Error(`${index + 1}번째 세션의 ${modelIndex + 1}번째 model.name은 문자열이어야 합니다.`);
+          }
+          if (typeof original !== 'string') {
+            throw new Error(`${index + 1}번째 세션의 ${modelIndex + 1}번째 model.original은 문자열이어야 합니다.`);
+          }
+          if (typeof korean !== 'string') {
+            throw new Error(`${index + 1}번째 세션의 ${modelIndex + 1}번째 model.korean은 문자열이어야 합니다.`);
+          }
+          return { name, original, korean };
+        });
+
+        return { sessionNumber, question, questionKorean, models: normalizedModels };
+      });
+
+      normalized.sort((a, b) => a.sessionNumber - b.sessionNumber);
+      return normalized;
+    }
+
+    function validateAndLoad() {
       errorMessage.textContent = '';
       viewer.hidden = true;
 
-      const response = await fetch('/api/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonText: jsonInput.value })
-      });
-      const result = await response.json();
-
-      if (!result.ok) {
-        errorMessage.textContent = result.error || '알 수 없는 오류가 발생했습니다.';
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonInput.value);
+      } catch (err) {
+        errorMessage.textContent = `JSON 파싱 오류: ${err.message}`;
         return;
       }
 
-      sessions = result.sessions;
+      try {
+        sessions = normalizeAndValidateClient(parsed);
+      } catch (err) {
+        errorMessage.textContent = err.message;
+        return;
+      }
+
       currentIndex = 0;
       renderSession();
     }
 
-    validateBtn.addEventListener('click', () => {
-      validateAndLoad().catch((err) => {
-        errorMessage.textContent = `요청 실패: ${err.message}`;
-      });
-    });
+    validateBtn.addEventListener('click', validateAndLoad);
 
     prevBtn.addEventListener('click', () => {
       if (currentIndex > 0) {
@@ -363,4 +425,20 @@ PAGE_TEMPLATE = """
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    parser = argparse.ArgumentParser(description="LLM 답변 비교용 Flask 웹앱")
+    parser.add_argument(
+        "--json-path",
+        type=str,
+        default="",
+        help="시작 시 textarea에 미리 채울 JSON 파일 경로",
+    )
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--debug", action="store_true")
+    args = parser.parse_args()
+
+    if args.json_path:
+        path = Path(args.json_path).expanduser()
+        INITIAL_JSON_TEXT = path.read_text(encoding="utf-8")
+
+    app.run(host=args.host, port=args.port, debug=args.debug)
