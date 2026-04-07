@@ -8,6 +8,7 @@ from typing import Any
 from flask import Flask, render_template
 
 app = Flask(__name__)
+INITIAL_JSON_TEXT = ""
 
 SESSIONS: list[dict[str, Any]] = []
 
