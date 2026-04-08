@@ -12,6 +12,9 @@
       --text: #1f2430;
       --muted: #5f6b7a;
       --border: #d7deea;
+      --primary: #1f6feb;
+      --primary-hover: #165dcc;
+      --disabled: #9fb4db;
     }
     body {
       margin: 0;
@@ -19,6 +22,39 @@
       background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .nav-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .nav-btn {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: var(--primary);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .nav-btn:hover { background: var(--primary-hover); }
+    .nav-btn:disabled {
+      background: var(--disabled);
+      cursor: not-allowed;
+    }
+    .session-index {
+      font-size: 14px;
+      color: var(--muted);
+      margin: 0;
     }
     .panel {
       background: var(--card);
@@ -66,13 +102,41 @@
       margin: 0;
       flex: 1;
     }
+    .reasoning-toggle {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+    }
+    .reasoning-content {
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .reasoning-content.open {
+      display: flex;
+    }
+    .session-panel { display: none; }
+    .session-panel.active { display: block; }
   </style>
 </head>
 <body>
-  <h1>LLM 답변 비교 웹페이지</h1>
+  <div class="header">
+    <h1>LLM 답변 비교 웹페이지</h1>
+    <div class="nav-controls">
+      <button id="prev-btn" class="nav-btn" type="button">이전</button>
+      <button id="next-btn" class="nav-btn" type="button">다음</button>
+      <p id="session-index" class="session-index"></p>
+    </div>
+  </div>
 
   {% for session in sessions %}
-  <div class="panel">
+  <div class="panel session-panel{% if loop.first %} active{% endif %}" data-session-index="{{ loop.index0 }}">
     <p class="meta">세션 {{ session.sessionNumber }}</p>
     <p class="question">Q(EN): {{ session.question }}</p>
     <p class="question">Q(KO): {{ session.questionKorean }}</p>
@@ -80,6 +144,21 @@
       {% for model in session.models %}
       <div class="model-card">
         <p class="model-name">{{ model.name }}</p>
+
+        {% if model.reasoning or model.reasoningKorean %}
+        <button class="reasoning-toggle" type="button">Reasoning 보기</button>
+        <div class="reasoning-content">
+          {% if model.reasoning %}
+          <p class="label">Reasoning</p>
+          <p class="answer">{{ model.reasoning }}</p>
+          {% endif %}
+          {% if model.reasoningKorean %}
+          <p class="label">Reasoning (Korean)</p>
+          <p class="answer">{{ model.reasoningKorean }}</p>
+          {% endif %}
+        </div>
+        {% endif %}
+
         <p class="label">Original</p>
         <p class="answer">{{ model.original }}</p>
         <p class="label">Korean</p>
@@ -89,5 +168,55 @@
     </div>
   </div>
   {% endfor %}
+
+  <script>
+    (() => {
+      const sessionPanels = Array.from(document.querySelectorAll('.session-panel'));
+      const prevBtn = document.getElementById('prev-btn');
+      const nextBtn = document.getElementById('next-btn');
+      const sessionIndex = document.getElementById('session-index');
+      let currentIndex = 0;
+
+      const updateSessionView = () => {
+        sessionPanels.forEach((panel, idx) => {
+          panel.classList.toggle('active', idx === currentIndex);
+        });
+        if (sessionPanels.length === 0) {
+          sessionIndex.textContent = '세션이 없습니다.';
+          prevBtn.disabled = true;
+          nextBtn.disabled = true;
+          return;
+        }
+
+        sessionIndex.textContent = `${currentIndex + 1} / ${sessionPanels.length}`;
+        prevBtn.disabled = currentIndex === 0;
+        nextBtn.disabled = currentIndex === sessionPanels.length - 1;
+      };
+
+      prevBtn.addEventListener('click', () => {
+        if (currentIndex > 0) {
+          currentIndex -= 1;
+          updateSessionView();
+        }
+      });
+
+      nextBtn.addEventListener('click', () => {
+        if (currentIndex < sessionPanels.length - 1) {
+          currentIndex += 1;
+          updateSessionView();
+        }
+      });
+
+      document.querySelectorAll('.reasoning-toggle').forEach((toggleBtn) => {
+        toggleBtn.addEventListener('click', () => {
+          const reasoningContent = toggleBtn.nextElementSibling;
+          const isOpen = reasoningContent.classList.toggle('open');
+          toggleBtn.textContent = isOpen ? 'Reasoning 숨기기' : 'Reasoning 보기';
+        });
+      });
+
+      updateSessionView();
+    })();
+  </script>
 </body>
 </html>
